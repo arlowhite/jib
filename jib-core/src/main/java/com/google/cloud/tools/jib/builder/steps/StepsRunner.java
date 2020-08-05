@@ -75,10 +75,9 @@ public class StepsRunner {
     private Future<List<Future<BlobDescriptor>>> applicationLayerPushResults = failedFuture();
     private Future<Map<Future<Image>, Future<BlobDescriptor>>>
         builtImagesAndContainerConfigurationPushResults = failedFuture();
-    //    private Future<BuildResult> buildResult = failedFuture();
     private Future<List<Future<BuildResult>>> buildResults = failedFuture();
-    private Future<Map<Future<Image>, Future<Optional<ManifestAndDigest<ManifestTemplate>>>>>
-        builtImagesAndManifestCheckResults = failedFuture();
+    private Future<Optional<ManifestAndDigest<ManifestTemplate>>> manifestCheckResult =
+        failedFuture();
   }
 
   /**
@@ -429,28 +428,21 @@ public class StepsRunner {
     ProgressEventDispatcher.Factory childProgressDispatcherFactory =
         Verify.verifyNotNull(rootProgressDispatcher).newChildProducer();
 
-    results.builtImagesAndManifestCheckResults =
+    results.manifestCheckResult =
         executorService.submit(
-            () -> {
-              Map<Future<Image>, Future<Optional<ManifestAndDigest<ManifestTemplate>>>>
-                  checkResults = new HashMap<>();
-              for (Map.Entry<Future<Image>, Future<BlobDescriptor>> entry :
-                  results.builtImagesAndContainerConfigurationPushResults.get().entrySet()) {
-
-                Future<Optional<ManifestAndDigest<ManifestTemplate>>> checkResult =
-                    executorService.submit(
-                        () ->
-                            new CheckImageStep(
-                                    buildContext,
-                                    childProgressDispatcherFactory,
-                                    results.targetRegistryClient.get(),
-                                    Verify.verifyNotNull(entry.getValue().get()),
-                                    entry.getKey().get())
-                                .call());
-                checkResults.put(entry.getKey(), checkResult);
-              }
-              return checkResults;
-            });
+            () ->
+                new CheckImageStep(
+                        buildContext,
+                        childProgressDispatcherFactory,
+                        results.targetRegistryClient.get(),
+                        Verify.verifyNotNull(
+                                results
+                                    .builtImagesAndContainerConfigurationPushResults
+                                    .get()
+                                    .get(results.builtImages.get().get(0)))
+                            .get(),
+                        results.builtImages.get().get(0).get())
+                    .call());
   }
 
   private void pushImages() {
@@ -480,25 +472,12 @@ public class StepsRunner {
                                       results.targetRegistryClient.get(),
                                       Verify.verifyNotNull(entry.getValue()).get(),
                                       entry.getKey().get(),
-                                      Verify.verifyNotNull(
-                                              results
-                                                  .builtImagesAndManifestCheckResults
-                                                  .get()
-                                                  .get(entry.getKey()))
-                                          .get()
-                                          .isPresent()));
+                                      results.manifestCheckResult.get().isPresent()));
 
                           realizeFutures(manifestPushResults);
                           return manifestPushResults.isEmpty()
                               ? new BuildResult(
-                                  Verify.verifyNotNull(
-                                          results
-                                              .builtImagesAndManifestCheckResults
-                                              .get()
-                                              .get(entry.getKey()))
-                                      .get()
-                                      .get()
-                                      .getDigest(),
+                                  results.manifestCheckResult.get().get().getDigest(),
                                   Verify.verifyNotNull(entry.getValue()).get().getDigest())
                               // Manifest pushers return the same BuildResult.
                               : manifestPushResults.get(0).get();
